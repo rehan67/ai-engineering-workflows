@@ -18,16 +18,18 @@ export function application() {
     if (req.method !== "POST") return send(404, { error: "Not found." });
     if (req.headers["content-type"]?.split(";")[0] !== "application/json")
       return send(415, { error: "JSON is required." });
-    let raw = "";
+    const chunks: Buffer[] = [];
+    let size = 0;
     try {
       for await (const chunk of req) {
-        raw += String(chunk);
-        if (Buffer.byteLength(raw) > 4096)
-          return send(413, { error: "Request too large." });
+        const bytes = Buffer.from(chunk as Uint8Array);
+        size += bytes.length;
+        if (size > 4096) return send(413, { error: "Request too large." });
+        chunks.push(bytes);
       }
       let body: unknown;
       try {
-        body = JSON.parse(raw);
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       } catch {
         return send(400, { error: "Invalid JSON." });
       }

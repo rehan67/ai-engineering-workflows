@@ -2,7 +2,59 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Course } from "../src/course.js";
 import { application } from "../src/server.js";
+import { request } from "node:http";
 const student = "11111111-1111-4111-8111-111111111111";
+
+test("HTTP preserves Unicode when a UTF-8 character crosses body chunks", async () => {
+  const server = application();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const title = "Architecture 🚀";
+  const bytes = Buffer.from(JSON.stringify({ title, capacity: 1 }));
+  const split = bytes.indexOf(Buffer.from("🚀")) + 1;
+  try {
+    const result = await new Promise<{
+      status: number | undefined;
+      title: string;
+    }>((resolve, reject) => {
+      const req = request(
+        {
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: "/courses",
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            try {
+              resolve({
+                status: res.statusCode,
+                title: JSON.parse(Buffer.concat(chunks).toString("utf8")).title,
+              });
+            } catch (error) {
+              reject(error);
+            }
+          });
+          res.on("error", reject);
+        },
+      );
+      req.on("error", reject);
+      req.write(bytes.subarray(0, split));
+      setTimeout(() => req.end(bytes.subarray(split)), 30);
+    });
+    assert.equal(result.status, 201);
+    assert.equal(result.title, title);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
 test("course capacity and replay invariants", () => {
   const course = new Course("Architecture", 1);
   course.enroll(student);
